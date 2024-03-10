@@ -1,33 +1,37 @@
 workspace {
-    name "Умный дом"
-    description "Простая система управления умного дома с базовыми функциями контроля состояния атмосферы в помещении"
+    name "Сервис поиска попутчиков"
+    description "Сервис, помогающий людям найти попутчиков для совместных поездок"
 
     # включаем режим с иерархической системой идентификаторов
     !identifiers hierarchical
 
     !docs documentation
     !adrs decisions
+
     # Модель архитектуры
     model {
-
         # Настраиваем возможность создания вложенных груп
         properties { 
             structurizr.groupSeparator "/"
         }
-        
 
         # Описание компонент модели
-        user = person "Пользователь умного дома"
-        sensor     = softwareSystem "Датчик температуры"
-        smart_home = softwareSystem "Умный дом" {
-            description "Сервер управления умным домом"
+        user    = person "Пользователь"
+        route   = softwareSystem "Система построения маршрутов"
+        api     = softwareSystem "API" {
+            description "Серверная часть приложения"
+            tags "backend"
 
             user_service = container "User service" {
                 description "Сервис управления пользователями"
             }
 
-            temperature_service = container "Temperature service" {
-                description "Сервис мониторинга и управления температурой в доме"
+            route_service = container "Route service" {
+                description "Сервис управления маршрутами"
+            }
+
+            trip_service = container "Trip service" {
+                description "Сервис управления поездками"
             }
 
             group "Слой данных" {
@@ -43,8 +47,8 @@ workspace {
                     tags "database"
                 }
 
-                smarthome_database = container "Smarthome Database" {
-                    description "База данных для хранения информации с сенсоров"
+                route_database = container "Route Database" {
+                    description "База данных для хранения информации о маршрутах"
                     technology "MongoDB 5"
                     tags "database"
                 }
@@ -52,24 +56,26 @@ workspace {
 
             user_service -> user_cache "Получение/обновление данных о пользователях" "TCP 6379"
             user_service -> user_database "Получение/обновление данных о пользователях" "TCP 5432"
+            user_service -> trip_service "Получение данных о поездке" "TCP 1580"
 
-            temperature_service -> smarthome_database "Получение/обновление данных о температуре" "TCP 27018"
-            temperature_service -> user_service "Аутентификация пользователя" "REST HTTP 443"
+            route_service -> route_database "Получение данных о маршрутах" "TCP 27018"
 
-            user -> user_service "Регистрация нового пользователя" "REST HTTP:8080"
-            sensor -> temperature_service "Получение данных о температуре в доме" "REST HTTP:8080"
+            trip_service -> route_service "Получение маршрута" "TCP 7018"
+
+            user -> user_service "Регистрация нового пользователя / ауентификация" "REST HTTP:8080"
+            route -> route_service "Обновление данных о маршрутах" "REST HTTP:8080"
         }
 
-        user -> smart_home "Управление устройствами умного дома"
-        sensor -> smart_home "Обновление актуальных данных о температуре в доме" "REST HTTP:8080"
+        user -> api "Запросы к API"
+        route -> api "Получение актуальных данных о маршрутах"
 
         deploymentEnvironment "Production" {
             deploymentNode "User Server" {
-                containerInstance smart_home.user_service
+                containerInstance api.user_service
             }
 
-            deploymentNode "Temperature Server" {
-                containerInstance smart_home.temperature_service
+            deploymentNode "Route Server" {
+                containerInstance api.route_service
                 properties {
                     "cpu" "4"
                     "ram" "256Gb"
@@ -77,19 +83,23 @@ workspace {
                 }
             }
 
+            deploymentNode "Trip Server" {
+                containerInstance api.trip_service
+            }
+
             deploymentNode "databases" {
      
                 deploymentNode "Database Server 1" {
-                    containerInstance smart_home.user_database
+                    containerInstance api.user_database
                 }
 
                 deploymentNode "Database Server 2" {
-                    containerInstance smart_home.smarthome_database
+                    containerInstance api.route_database
                     instances 3
                 }
 
                 deploymentNode "Cache Server" {
-                    containerInstance smart_home.user_cache
+                    containerInstance api.user_cache
                 }
             }
             
@@ -109,29 +119,51 @@ workspace {
             workspace.views.views.findAll { it instanceof com.structurizr.view.ModelView }.each { it.enableAutomaticLayout() }
         }
 
-        dynamic smart_home "UC01" "Добавление нового пользователя" {
+
+        dynamic api "UC01" "Добавление нового пользователя" {
             autoLayout
-            user -> smart_home.user_service "Создать нового пользователя (POST /user)"
-            smart_home.user_service -> smart_home.user_database "Сохранить данные о пользователе" 
+            user -> api.user_service "Создать нового пользователя (Swagger POST /user)"
+            api.user_service -> api.user_database "Сохранить данные о пользователе" 
         }
 
-        dynamic smart_home "UC02" "Удаление пользователя" {
+        dynamic api "UC02" "Поиск пользователя по логину или по маске имя фамилия" {
             autoLayout
-            user -> smart_home.user_service "Удалить нового пользователя (DELETE /user)"
-            smart_home.user_service -> smart_home.user_database "Удалить данные о пользователе" 
+            user -> api.user_service "Найти пользователя (GET /user /string)"
         }
 
-        dynamic smart_home "UC03" "Сохранить данные о температуре" {
+        dynamic api "UC03" "Создание маршрута" {
             autoLayout
-            sensor -> smart_home.temperature_service "Сохранить данные о температуре (POST /user)"
-            smart_home.temperature_service -> smart_home.smarthome_database "Сохранить данные о температуре" 
+            route -> api.route_service "Создать новый маршрут (POST /route)"
+            api.route_service -> api.route_database "Сохранить данные о маршруте"
         }
 
-        dynamic smart_home "UC04" "Получить данные о температуре" {
+        dynamic api "UC04" "Получение маршрутов пользователя" {
             autoLayout
-            sensor -> smart_home.temperature_service "Получить данные о температуре (GET /user)"
-            smart_home.temperature_service -> smart_home.user_service "Проверить аутентификацию пользователя (GET /user)"
-            smart_home.temperature_service -> smart_home.smarthome_database "Получить данные о температуре" 
+            user -> api.user_service "Найти пользователя (GET /user)"
+            api.user_service -> api.trip_service "Найти поездки пользователя (GET /trip)"
+            api.trip_service -> api.route_service "Найти маршруты пользователя (GET /route)"
+        }
+
+        dynamic api "UC05" "Создание поездки" {
+            autoLayout
+            user -> api.user_service "Создать поездку (POST /api)"
+            api.user_service -> api.trip_service "Создать поездку (POST /trip)"
+            api.trip_service -> api.route_service "Создать маршрут (POST /route)"
+            api.route_service -> api.route_database "Сохранить данные о созданном маршруте"
+        }
+
+        dynamic api "UC06" "Подключение пользователей к поездке" {
+            autoLayout
+            user -> api.user_service "Подключить к поездке (POST /user /trip)"
+            api.user_service -> api.trip_service "Подключить пользователя к поездке (POST /user /trip)"
+        }
+
+        dynamic api "UC07" "Получение информации о поездке" {
+            autoLayout
+            user -> api.user_service "Найти информацию о поездке (GET /trip)"
+            api.user_service -> api.trip_service "Получить информацию о поездке (GET /trip)"
+            api.trip_service -> api.route_service "Получить информацию о маршруте (GET /route)"
+            api.route_service -> api.route_database "Получить информацию о маршруте (GET /route)"
         }
 
 
